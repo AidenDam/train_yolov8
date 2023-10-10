@@ -19,6 +19,7 @@ from .build import build_sam
 class Predictor(BasePredictor):
 
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
+        """Initializes the Predictor class with default or provided configuration, overrides, and callbacks."""
         if overrides is None:
             overrides = {}
         overrides.update(dict(task='segment', mode='predict', imgsz=1024))
@@ -34,7 +35,8 @@ class Predictor(BasePredictor):
         self.segment_all = False
 
     def preprocess(self, im):
-        """Prepares input image before inference.
+        """
+        Prepares input image before inference.
 
         Args:
             im (torch.Tensor | List(np.ndarray)): BCHW for tensor, [(HWC) x B] for list.
@@ -48,11 +50,11 @@ class Predictor(BasePredictor):
             im = np.ascontiguousarray(im)  # contiguous
             im = torch.from_numpy(im)
 
-        img = im.to(self.device)
-        img = img.half() if self.model.fp16 else img.float()  # uint8 to fp16/32
+        im = im.to(self.device)
+        im = im.half() if self.model.fp16 else im.float()  # uint8 to fp16/32
         if not_tensor:
-            img = (img - self.mean) / self.std
-        return img
+            im = (im - self.mean) / self.std
+        return im
 
     def pre_transform(self, im):
         """
@@ -64,8 +66,9 @@ class Predictor(BasePredictor):
         Returns:
             (list): A list of transformed images.
         """
-        assert len(im) == 1, 'SAM model has not supported batch inference yet!'
-        return [LetterBox(self.args.imgsz, auto=False, center=False)(image=x) for x in im]
+        assert len(im) == 1, 'SAM model does not currently support batched inference'
+        letterbox = LetterBox(self.args.imgsz, auto=False, center=False)
+        return [letterbox(image=x) for x in im]
 
     def inference(self, im, bboxes=None, points=None, labels=None, masks=None, multimask_output=False, *args, **kwargs):
         """
@@ -188,7 +191,8 @@ class Predictor(BasePredictor):
                  stability_score_thresh=0.95,
                  stability_score_offset=0.95,
                  crop_nms_thresh=0.7):
-        """Segment the whole image.
+        """
+        Segment the whole image.
 
         Args:
             im (torch.Tensor): The preprocessed image, (N, C, H, W).
@@ -312,10 +316,13 @@ class Predictor(BasePredictor):
         pred_masks, pred_scores = preds[:2]
         pred_bboxes = preds[2] if self.segment_all else None
         names = dict(enumerate(str(i) for i in range(len(pred_masks))))
+
+        if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
+            orig_imgs = ops.convert_torch2numpy_batch(orig_imgs)
+
         results = []
-        is_list = isinstance(orig_imgs, list)  # input images are a list, not a torch.Tensor
         for i, masks in enumerate([pred_masks]):
-            orig_img = orig_imgs[i] if is_list else orig_imgs
+            orig_img = orig_imgs[i]
             if pred_bboxes is not None:
                 pred_bboxes = ops.scale_boxes(img.shape[2:], pred_bboxes.float(), orig_img.shape, padding=False)
                 cls = torch.arange(len(pred_masks), dtype=torch.int32, device=pred_masks.device)
@@ -356,14 +363,15 @@ class Predictor(BasePredictor):
         self.prompts = prompts
 
     def reset_image(self):
+        """Resets the image and its features to None."""
         self.im = None
         self.features = None
 
     @staticmethod
     def remove_small_regions(masks, min_area=0, nms_thresh=0.7):
         """
-        Removes small disconnected regions and holes in masks, then reruns
-        box NMS to remove any new duplicates. Requires open-cv as a dependency.
+        Removes small disconnected regions and holes in masks, then reruns box NMS to remove any new duplicates.
+        Requires open-cv as a dependency.
 
         Args:
             masks (torch.Tensor): Masks, (N, H, W).
